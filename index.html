@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>FA01 Kombine Hesaplayıcı</title>
 <meta name="theme-color" content="#0f0f0f">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -19,6 +19,7 @@
   --border:#3a3a3a;
   --muted:#a3a3a3;
   --blue:#3b82f6;
+  --red:#f87171;
 }
 body{
   margin:0;
@@ -71,6 +72,7 @@ label{
   border-radius:13px;
   background:#202020;
   overflow:hidden;
+  transition:border-color .15s ease, box-shadow .15s ease;
 }
 .prefix{
   min-width:50px;
@@ -93,11 +95,24 @@ input{
   font-size:22px;
   background:transparent;
   color:#fff;
+  font-family:inherit;
 }
 input::placeholder{color:#777}
 .input-wrap:focus-within{
   border-color:var(--green);
   box-shadow:0 0 0 3px rgba(190,242,100,.12);
+}
+.input-wrap.invalid{
+  border-color:var(--red);
+  box-shadow:0 0 0 3px rgba(248,113,113,.14);
+}
+.field-error{
+  display:block;
+  min-height:16px;
+  margin-top:6px;
+  font-size:12.5px;
+  font-weight:600;
+  color:var(--red);
 }
 button{
   width:100%;
@@ -110,7 +125,26 @@ button{
   background:linear-gradient(180deg,var(--green),var(--green2));
   color:#101010;
   cursor:pointer;
+  transition:opacity .15s ease, transform .1s ease;
 }
+button:active{transform:scale(.99)}
+button:disabled{
+  opacity:.7;
+  cursor:not-allowed;
+}
+.form-alert{
+  display:none;
+  margin-top:10px;
+  padding:11px 13px;
+  border:1px solid rgba(248,113,113,.35);
+  border-radius:12px;
+  background:rgba(248,113,113,.10);
+  color:var(--red);
+  font-size:13.5px;
+  font-weight:600;
+  line-height:1.4;
+}
+.form-alert.show{display:block}
 .result{
   margin-top:18px;
   padding:18px;
@@ -138,12 +172,39 @@ button{
   font-weight:900;
 }
 .result-title{font-size:18px;font-weight:900}
-.big{
+.value-row{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  flex-wrap:wrap;
   margin-top:4px;
+}
+.big{
   font-size:44px;
   font-weight:950;
   color:var(--green);
   word-break:break-word;
+}
+.copy-btn{
+  width:auto;
+  min-height:0;
+  margin-top:0;
+  flex-shrink:0;
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:8px 14px;
+  font-size:14px;
+  font-weight:800;
+  border-radius:999px;
+  background:#202020;
+  color:var(--green);
+  border:1px solid rgba(190,242,100,.35);
+}
+.copy-btn.copied{
+  background:linear-gradient(180deg,var(--green),var(--green2));
+  color:#101010;
+  border-color:transparent;
 }
 .formula{
   margin-top:6px;
@@ -173,18 +234,25 @@ button{
 
   <section class="panel">
     <label for="bahis">Bahis Tutarı (€)</label>
-    <div class="input-wrap"><div class="prefix">€</div><input id="bahis" type="number" inputmode="decimal" step="0.01" placeholder="Örn: 100"></div>
+    <div class="input-wrap" id="bahisWrap"><div class="prefix">€</div><input id="bahis" type="text" inputmode="decimal" placeholder="Örn: 100"></div>
+    <span class="field-error" id="bahisError"></span>
 
     <label for="oran1">1. Bahis Oranı</label>
-    <div class="input-wrap"><div class="prefix">↗</div><input id="oran1" type="number" inputmode="decimal" step="0.01" placeholder="Örn: 1.67"></div>
+    <div class="input-wrap" id="oran1Wrap"><div class="prefix">↗</div><input id="oran1" type="text" inputmode="decimal" placeholder="Örn: 1.67"></div>
+    <span class="field-error" id="oran1Error"></span>
 
-    <button type="button" onclick="hesapla()">1. BAHİS KAZANÇ OLURSA HESAPLA</button>
+    <div class="form-alert" id="formAlert" role="alert"></div>
+
+    <button type="button" id="hesaplaBtn" onclick="hesapla()">HESAPLA</button>
 
     <div id="sonucBox" class="result">
       <div class="badge">€</div>
-      <div>
-        <div class="result-title">Alınacak Tutar (€)</div>
-        <div id="sonuc" class="big">0.00 €</div>
+      <div style="flex:1;min-width:0">
+        <div class="result-title">Borsada Alınacak Tutar (€)</div>
+        <div class="value-row">
+          <div id="sonuc" class="big">0.00 €</div>
+          <button type="button" class="copy-btn" id="copyBtn" onclick="kopyala()">📋 Kopyala</button>
+        </div>
         <div class="formula">Formül: Bahis Tutarı × 1. Bahis Oranı</div>
       </div>
     </div>
@@ -193,13 +261,122 @@ button{
   <div class="footer"><b>FA01</b> BETTING EXCHANGE</div>
 </main>
 <script>
-function sayi(id){var v=document.getElementById(id).value;v=String(v).replace(",",".");var n=parseFloat(v);return isNaN(n)?0:n;}
+// Girdi değerini sayıya çevirir; hem virgüllü (1,67) hem noktalı (1.67)
+// ondalık girişleri kabul eder. Geçersiz/boş girişte null döner.
+function sayiOku(id){
+  var raw = document.getElementById(id).value;
+  var v = String(raw).trim().replace(",", ".");
+  if(v === "") return null;
+  var n = parseFloat(v);
+  if(isNaN(n) || !isFinite(n)) return null;
+  return n;
+}
+
+function alanHatasiTemizle(){
+  ["bahis","oran1"].forEach(function(id){
+    document.getElementById(id+"Wrap").classList.remove("invalid");
+    document.getElementById(id+"Error").textContent = "";
+  });
+  var alert = document.getElementById("formAlert");
+  alert.classList.remove("show");
+  alert.textContent = "";
+}
+
+function alanHatasiGoster(id, mesaj){
+  document.getElementById(id+"Wrap").classList.add("invalid");
+  document.getElementById(id+"Error").textContent = mesaj;
+}
+
+function genelHataGoster(mesaj){
+  var alert = document.getElementById("formAlert");
+  alert.textContent = mesaj;
+  alert.classList.add("show");
+}
+
 function hesapla(){
-  var bahis=sayi("bahis");
-  var oran1=sayi("oran1");
-  var sonuc=bahis*oran1;
-  document.getElementById("sonuc").innerHTML=sonuc.toFixed(2)+" €";
+  alanHatasiTemizle();
+  document.getElementById("sonucBox").classList.remove("active");
+
+  var bahis = sayiOku("bahis");
+  var oran1 = sayiOku("oran1");
+  var gecerli = true;
+
+  if(bahis === null){
+    alanHatasiGoster("bahis", "Bahis tutarı boş bırakılamaz.");
+    gecerli = false;
+  } else if(bahis <= 0){
+    alanHatasiGoster("bahis", "Bahis tutarı negatif veya sıfır olamaz.");
+    gecerli = false;
+  }
+
+  if(oran1 === null){
+    alanHatasiGoster("oran1", "1. bahis oranı boş bırakılamaz.");
+    gecerli = false;
+  } else if(oran1 < 1.01){
+    alanHatasiGoster("oran1", "1. bahis oranı en az 1.01 olmalıdır.");
+    gecerli = false;
+  }
+
+  if(!gecerli){
+    genelHataGoster("Lütfen yukarıdaki alanları kontrol edin.");
+    return;
+  }
+
+  var sonuc = bahis * oran1;
+  document.getElementById("sonuc").textContent = sonuc.toFixed(2) + " €";
   document.getElementById("sonucBox").classList.add("active");
+
+  var btn = document.getElementById("hesaplaBtn");
+  btn.textContent = "HESAPLANDI";
+  btn.disabled = true;
+  clearTimeout(btn._geriDonTimer);
+  btn._geriDonTimer = setTimeout(function(){
+    btn.textContent = "HESAPLA";
+    btn.disabled = false;
+  }, 3000);
+}
+
+// Panoya kopyalarken sadece rakamları kopyalar; € sembolü kopyalanmaz.
+function kopyala(){
+  var metin = document.getElementById("sonuc").textContent.replace("€", "").trim();
+
+  function basariliGoster(){
+    var btn = document.getElementById("copyBtn");
+    var eskiHtml = btn.innerHTML;
+    btn.innerHTML = "✅ Kopyalandı";
+    btn.classList.add("copied");
+    clearTimeout(btn._kopyalaTimer);
+    btn._kopyalaTimer = setTimeout(function(){
+      btn.innerHTML = eskiHtml;
+      btn.classList.remove("copied");
+    }, 2000);
+  }
+
+  function yedekKopyala(){
+    var ta = document.createElement("textarea");
+    ta.value = metin;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try { document.execCommand("copy"); basariliGoster(); } catch(e) {}
+    document.body.removeChild(ta);
+  }
+
+  if(navigator.clipboard && window.isSecureContext){
+    navigator.clipboard.writeText(metin).then(basariliGoster).catch(yedekKopyala);
+  } else {
+    yedekKopyala();
+  }
+}
+
+if("serviceWorker" in navigator){
+  window.addEventListener("load", function(){
+    navigator.serviceWorker.register("service-worker.js").catch(function(err){
+      console.error("Service worker kaydı başarısız:", err);
+    });
+  });
 }
 </script>
 </body>
